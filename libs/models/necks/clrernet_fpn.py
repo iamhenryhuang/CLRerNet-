@@ -4,11 +4,38 @@ https://github.com/Turoad/CLRNet/blob/main/clrnet/models/necks/fpn.py
 """
 
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from mmcv.cnn import ConvModule
 from mmdet.registry import MODELS
+
+
+class FeatureEnhancementModule(nn.Module):
+    def __init__(self, in_channels):
+        super(FeatureEnhancementModule, self).__init__()
+        self.conv1x1_g = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.conv1x1_a = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.conv3x3_a = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.conv1x1_enh = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.bn_enh = nn.BatchNorm2d(in_channels)
+
+    def forward(self, f_ori):
+        # 1. Gain generation
+        g = torch.sigmoid(self.conv1x1_g(f_ori))
+        
+        # 2. Feature amplification
+        f_gain = (1 + g) * f_ori
+        
+        # 3. Spatial refinement
+        a_special = torch.sigmoid(self.conv1x1_a(f_gain))
+        f_attn = a_special * self.conv3x3_a(f_gain)
+        
+        # 4. Residual fusion
+        f_enh = self.bn_enh(f_ori + self.conv1x1_enh(f_attn))
+        
+        return f_enh
 
 
 @MODELS.register_module()
@@ -57,6 +84,8 @@ class CLRerNetFPN(nn.Module):
             self.lateral_convs.append(l_conv)
             self.fpn_convs.append(fpn_conv)
 
+        self.fem = FeatureEnhancementModule(self.out_channels)
+
     def forward(self, inputs):
         """
         Args:
@@ -94,4 +123,5 @@ class CLRerNetFPN(nn.Module):
             )
 
         outs = [self.fpn_convs[i](laterals[i]) for i in range(used_backbone_levels)]
+        outs[0] = self.fem(outs[0])
         return tuple(outs)
