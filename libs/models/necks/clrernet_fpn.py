@@ -36,6 +36,23 @@ class FeatureEnhancementModule(nn.Module):
         f_enh = self.bn_enh(f_ori + self.conv1x1_enh(f_attn))
         
         return f_enh
+    
+class SceneAwareGateModule(nn.Module):
+    def __init__(self, in_channels):
+        super(SceneAwareGateModule, self).__init__()
+        # Observe brightness, contrast and noise features from F_ori
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels // 2, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels // 2, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, f_ori, f_enh):
+        p = self.conv(f_ori)
+        # F_fuse = F_enh * p + F_ori * (1 - p)
+        f_fuse = f_enh * p + f_ori * (1 - p)
+        return f_fuse, p
 
 
 @MODELS.register_module()
@@ -85,6 +102,8 @@ class CLRerNetFPN(nn.Module):
             self.fpn_convs.append(fpn_conv)
 
         self.fem = FeatureEnhancementModule(self.out_channels)
+        self.sgm = SceneAwareGateModule(self.out_channels)
+        self.sgm_p = None  # To store probability map for loss calculation
 
     def forward(self, inputs):
         """
@@ -123,5 +142,13 @@ class CLRerNetFPN(nn.Module):
             )
 
         outs = [self.fpn_convs[i](laterals[i]) for i in range(used_backbone_levels)]
-        outs[0] = self.fem(outs[0])
+        
+        f_ori = outs[0]
+        f_enh = self.fem(f_ori)
+        
+        # Apply SGM
+        f_fuse, p = self.sgm(f_ori, f_enh)
+        self.sgm_p = p
+        
+        outs[0] = f_fuse
         return tuple(outs)
