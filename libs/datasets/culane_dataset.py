@@ -92,6 +92,15 @@ class CulaneDataset(Dataset):
     def __len__(self):
         return len(self.img_infos)
 
+    def _estimate_scene_label(self, img):
+        """Generate pseudo scene label from image brightness.
+
+        Returns:
+            float: 1.0 for dark/night-like image, 0.0 for bright/day-like image.
+        """
+        mean_luma = float(img.mean() / 255.0)
+        return 1.0 if mean_luma < 0.45 else 0.0
+
     def prepare_train_img(self, idx):
         """
         Read and process the image through the transform pipeline for training.
@@ -104,12 +113,14 @@ class CulaneDataset(Dataset):
         imgname = str(Path(self.img_prefix).joinpath(self.img_infos[idx]))
         sub_img_name = self.img_infos[idx]
         img = cv2.imread(imgname)
+        scene_label = self._estimate_scene_label(img)
         ori_shape = img.shape
         kps, id_classes, id_instances = self.load_labels(idx)
         results = dict(
             filename=imgname,
             sub_img_name=sub_img_name,
             img=img,
+            scene_label=scene_label,
             gt_points=kps,
             id_classes=id_classes,
             id_instances=id_instances,
@@ -133,11 +144,13 @@ class CulaneDataset(Dataset):
         img_name = str(Path(self.img_prefix).joinpath(self.img_infos[idx]))
         sub_img_name = self.img_infos[idx]
         img = cv2.imread(img_name)
+        scene_label = self._estimate_scene_label(img)
         ori_shape = img.shape
         results = dict(
             filename=img_name,
             sub_img_name=sub_img_name,
             img=img,
+            scene_label=scene_label,
             gt_points=[],
             id_classes=[],
             id_instances=[],
