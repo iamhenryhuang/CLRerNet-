@@ -40,15 +40,17 @@ class FeatureEnhancementModule(nn.Module):
 class SceneAwareGateModule(nn.Module):
     def __init__(self, in_channels):
         super(SceneAwareGateModule, self).__init__()
-        # Observe brightness, contrast and noise features from F_ori
+        # Predict one global gate probability per image.
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, in_channels // 2, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(in_channels // 2, 1, kernel_size=1),
             nn.Sigmoid()
         )
 
     def forward(self, f_ori, f_enh):
+        # p_global shape: [N, 1, 1, 1]
         p = self.conv(f_ori)
         # F_fuse = F_enh * p + F_ori * (1 - p)
         f_fuse = f_enh * p + f_ori * (1 - p)
