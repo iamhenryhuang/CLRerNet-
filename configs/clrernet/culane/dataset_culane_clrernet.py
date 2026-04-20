@@ -76,8 +76,6 @@ train_pipeline = [
             "scene_label",
             "ori_shape",
             "img_shape",
-            "ori_shape",
-            "img_shape",
             "gt_points",
             "gt_masks",
             "lanes",
