@@ -94,6 +94,36 @@ class CLRerNet(SingleStageDetector):
         result[night_idx] = enhanced_night
         return result
 
+    def _apply_lane_enhance_positive(self, batch_inputs, batch_data_samples, night_indices):
+        """Build positive samples by locally enhancing GT lane regions.
+
+        The lane mask is used only as a soft blending weight. Image processing is
+        applied to the original image, then mixed back only around GT lanes.
+        """
+        if not night_indices:
+            return batch_inputs
+
+        x_unit, scaled = self._to_unit_range(batch_inputs)
+
+        masks = self._create_lane_mask(batch_inputs, batch_data_samples, night_indices)
+        # Expand lane support, then smooth it into a soft alpha matte to avoid
+        # hard mask artifacts becoming the contrastive shortcut.
+        lane_alpha = F.max_pool2d(masks, kernel_size=15, stride=1, padding=7)
+        lane_alpha = F.avg_pool2d(lane_alpha, kernel_size=11, stride=1, padding=5)
+        lane_alpha = lane_alpha.clamp(0.0, 1.0).to(dtype=x_unit.dtype)
+
+        if lane_alpha.sum() <= 0:
+            return batch_inputs
+
+        # Unsharp mask plus a stronger brightness boost so GT lane pixels are
+        # visibly clearer while still avoiding synthetic neon lanes.
+        blur = F.avg_pool2d(x_unit, kernel_size=5, stride=1, padding=2)
+        sharp = x_unit + 1.2 * (x_unit - blur)
+        enhanced = (sharp + 0.18).clamp(0.0, 1.0)
+
+        positive = x_unit * (1.0 - lane_alpha) + enhanced * lane_alpha
+        return self._from_unit_range(positive, scaled).to(dtype=batch_inputs.dtype)
+
     def _create_lane_mask(self, batch_inputs, batch_data_samples, night_indices=None):
         """Create lane masks from GT annotations, only for night-scene images.
 
@@ -346,9 +376,11 @@ class CLRerNet(SingleStageDetector):
             night_data_samples = [batch_data_samples[i] for i in night_indices]
             night_idx_local = list(range(len(night_indices)))  # [0, 1, ..., M-1]
 
-            # Positive: ZeroDCE brightened, night sub-batch only.
+            # Positive: locally brighten/sharpen GT lane regions only.
             # Use no_grad for backbone/FPN; gradients only flow through proj heads.
-            pos_inputs = self._apply_zero_dce(night_inputs, night_idx_local)
+            pos_inputs = self._apply_lane_enhance_positive(
+                night_inputs, night_data_samples, night_idx_local
+            )
             with torch.no_grad():
                 x_pos = self.extract_feat(pos_inputs)
             self.neck.compute_proj_feats(x_pos)
